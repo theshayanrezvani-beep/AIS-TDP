@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-ربات قیمت بازار تلگرام — نرخ ارز، طلا و سکه
+ربات قیمت بازار تلگرام — نرخ ارز، طلا و سکه   (نسخه نهایی)
 دو بار در روز (۱۲ ظهر و ۱۲ شب به وقت تهران) یک پیام تمیز توی کانال می‌گذارد.
 اجرا روی GitHub Actions (رایگان، خارج از ایران).
 
-منبع داده: BrsApi.ir  (همه چیز را یکجا و به تومان می‌دهد: ارز، تتر، طلا، سکه، انس جهانی)
-نکته‌ی حیاتی: BrsApi پشتِ فایروالِ 6G است و User-Agent پیش‌فرضِ پایتون را بلاک می‌کند،
-پس حتماً با یک User-Agent شبیهِ مرورگرِ واقعی درخواست می‌دهیم.
+منبع داده: فایلِ JSON ثابتِ رایگانِ BrsApi روی دامنه‌ی اصلی (brsapi.ir)
+  - بدون کلید
+  - روی دامنه‌ی اصلی که از گیت‌هاب در دسترس است (نه api.brsapi.ir که از خارج timeout می‌دهد)
+  - با User-Agent مرورگر، چون فایروالِ 6G سایت، UA پیش‌فرضِ پایتون را بلاک می‌کند
+همه چیز را یکجا و به تومان می‌دهد: ارز، تتر، طلا، سکه و انس جهانی.
 """
 
 import os
@@ -26,15 +28,18 @@ try:
 except Exception:  # noqa
     jdatetime = None
 
+VERSION = "4.0 (BrsApi static-json)"
 
 # ─────────────────────────── تنظیمات (از env) ───────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 CHANNEL_ID         = os.getenv("TELEGRAM_CHANNEL_ID", "@yourchannel").strip()
 SIGNATURE          = os.getenv("SIGNATURE", "📊 @yourchannel | کانال نرخ بازار").strip()
-BRSAPI_KEY         = os.getenv("BRSAPI_KEY", "").strip()
 
-# اندپوینتِ درست و در دسترس از خارج (نه api.brsapi.ir که فقط داخل ایران جواب می‌دهد)
-BRSAPI_URL = "https://BrsApi.ir/Api/Market/Gold_Currency.php"
+# فایل‌های JSON ثابتِ رایگان (به ترتیب اولویت). بدون کلید.
+DATA_URLS = [
+    "https://brsapi.ir/FreeTsetmcBourseApi/Api_Free_Gold_Currency_v2.json",
+    "https://brsapi.ir/FreeTsetmcBourseApi/Api_Free_Gold_Currency.json",
+]
 
 PERSIAN_DIGITS = os.getenv("PERSIAN_DIGITS", "1") not in ("0", "false", "False")
 HTTP_TIMEOUT   = 25
@@ -66,19 +71,30 @@ GOLD_ITEMS = [
     ("OUNCE",      "🌍 انس جهانی طلا",       "دلار"),
 ]
 
-# نگاشت: کلید → (نمادهای ممکن, بخشی از نام فارسی)
+# نگاشت: کلید → (نمادهای ممکن, بخشی از نام فارسی) — نام، مطمئن‌ترین راهِ تطبیق است
 BRS_MATCH = {
-    "USD":        (["USD"],                          ["دلار آمریکا", "دلار"]),
-    "EUR":        (["EUR"],                          ["یورو"]),
-    "AED":        (["AED"],                          ["درهم"]),
-    "GBP":        (["GBP"],                          ["پوند"]),
-    "TRY":        (["TRY"],                          ["لیر"]),
-    "CNY":        (["CNY"],                          ["یوان"]),
-    "USDT":       (["USDT"],                         ["تتر"]),
-    "GOLD18":     (["IR_GOLD_18K", "18K", "GOLD18"], ["18 عیار", "۱۸ عیار", "طلای 18"]),
-    "COIN_EMAMI": (["IR_COIN_EMAMI", "SEKE_EMAMI"],  ["امامی"]),
-    "COIN_BAHAR": (["IR_COIN_BAHAR", "SEKE_BAHAR"],  ["بهار آزادی", "بهار"]),
-    "OUNCE":      (["XAUUSD", "XAU", "ONS"],         ["انس طلا"]),
+    "USD":        (["USD"],
+                   ["دلار آمریکا", "دلار"]),
+    "EUR":        (["EUR"],
+                   ["یورو"]),
+    "AED":        (["AED"],
+                   ["درهم امارات", "درهم"]),
+    "GBP":        (["GBP"],
+                   ["پوند انگلیس", "پوند"]),
+    "TRY":        (["TRY"],
+                   ["لیر ترکیه", "لیر"]),
+    "CNY":        (["CNY"],
+                   ["یوان چین", "یوان"]),
+    "USDT":       (["USDT"],
+                   ["تتر"]),
+    "GOLD18":     (["IR_GOLD_18K", "IR_GOLD_18", "GOLD18", "geram18", "18K"],
+                   ["طلای 18 عیار", "طلای ۱۸ عیار", "18 عیار", "۱۸ عیار"]),
+    "COIN_EMAMI": (["IR_COIN_EMAMI", "SEKE_EMAMI", "sekee_emami"],
+                   ["سکه امامی", "امامی"]),
+    "COIN_BAHAR": (["IR_COIN_BAHAR", "SEKE_BAHAR", "sekee"],
+                   ["سکه بهار آزادی", "بهار آزادی"]),
+    "OUNCE":      (["XAUUSD", "XAU", "ONS", "ons"],
+                   ["انس طلا", "اونس طلا", "انس"]),
 }
 
 
@@ -122,9 +138,16 @@ def change_badge(pct):
     return "  ➖"
 
 
+def get_field(item, *names):
+    """اولین فیلدِ موجود از میانِ چند نامِ ممکن."""
+    for n in names:
+        if n in item and item[n] not in (None, ""):
+            return item[n]
+    return None
+
+
 # ─────────────────────────── دریافت داده ───────────────────────────
 def _flatten(data):
-    """همه‌ی آیتم‌های دیکشنری را از لیست‌های تو‌در‌توی پاسخ جمع می‌کند."""
     items = []
     if isinstance(data, dict):
         for v in data.values():
@@ -137,37 +160,41 @@ def _flatten(data):
     return items
 
 
-def fetch_brsapi():
-    if not BRSAPI_KEY:
-        print("خطا: BRSAPI_KEY تنظیم نشده. کلید رایگان را از brsapi.ir بگیر و در Secrets بگذار.")
-        return {}
-    try:
-        r = requests.get(BRSAPI_URL, params={"key": BRSAPI_KEY},
-                         headers=BROWSER_HEADERS, timeout=HTTP_TIMEOUT)
-        print(f"[BrsApi] status = {r.status_code}")
-        r.raise_for_status()
-        data = r.json()
-    except Exception as e:
-        print(f"[BrsApi] خطا در دریافت: {e}")
+def fetch_data():
+    data = None
+    for url in DATA_URLS:
+        try:
+            r = requests.get(url, headers=BROWSER_HEADERS, timeout=HTTP_TIMEOUT)
+            print(f"[BrsApi] GET {url} → status {r.status_code}")
+            if r.status_code != 200:
+                continue
+            data = r.json()
+            break
+        except Exception as e:
+            print(f"[BrsApi] خطا روی {url}: {e}")
+            continue
+
+    if data is None:
+        print("[BrsApi] هیچ‌کدام از آدرس‌ها جواب ۲۰۰ ندادند.")
         return {}
 
     items = _flatten(data)
     print(f"[BrsApi] {len(items)} آیتم در پاسخ بود.")
     if items:
-        # نمونه‌ی چند آیتم اول برای اطمینان از ساختار
-        print(f"[BrsApi] نمونه: {str(items[:3])[:400]}")
+        print(f"[BrsApi] نمونه آیتم: {str(items[0])[:300]}")
 
     result = {}
     for key, (symbols, names) in BRS_MATCH.items():
         syms = [s.upper() for s in symbols]
         found = None
         for it in items:                       # اول با نماد
-            if str(it.get("symbol", "")).upper() in syms:
+            sym = str(get_field(it, "symbol", "Symbol", "code") or "").upper()
+            if sym and sym in syms:
                 found = it
                 break
         if found is None:                       # بعد با نام
             for it in items:
-                nm = str(it.get("name", ""))
+                nm = str(get_field(it, "name", "Name", "name_fa", "title") or "")
                 if any(n in nm for n in names):
                     found = it
                     break
@@ -175,11 +202,12 @@ def fetch_brsapi():
             print(f"[BrsApi] {key} پیدا نشد.")
             continue
         result[key] = {
-            "price": found.get("price"),
-            "pct": parse_change(found.get("change_percent", found.get("change_percentage"))),
-            "unit": (str(found.get("unit", "")).strip() or None),
+            "price": get_field(found, "price", "Price", "value", "p"),
+            "pct": parse_change(get_field(found, "change_percent", "change_percentage",
+                                          "dp", "percent")),
+            "unit": (str(get_field(found, "unit", "Unit") or "").strip() or None),
         }
-        print(f"[BrsApi] {key} ✓ = {found.get('price')} {found.get('unit','')}")
+        print(f"[BrsApi] {key} ✓ = {result[key]['price']} {result[key]['unit'] or ''}")
     return result
 
 
@@ -254,11 +282,12 @@ def send_message(text):
 
 # ─────────────────────────── main ───────────────────────────
 def main():
+    print(f"=== price_bot نسخه {VERSION} ===")  # نشانگرِ نسخه — برای اطمینان از اجرای کدِ جدید
     if not TELEGRAM_BOT_TOKEN:
         print("خطا: TELEGRAM_BOT_TOKEN تنظیم نشده.")
         sys.exit(1)
 
-    prices = fetch_brsapi()
+    prices = fetch_data()
     if not prices:
         print("هیچ داده‌ای گرفته نشد؛ برای جلوگیری از پست خالی خارج می‌شویم.")
         sys.exit(1)
