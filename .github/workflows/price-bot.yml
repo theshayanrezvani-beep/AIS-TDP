@@ -34,6 +34,5 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-          BRSAPI_KEY: ${{ secrets.BRSAPI_KEY }}
           SIGNATURE: ${{ secrets.SIGNATURE }}
         run: python price_bot.py
