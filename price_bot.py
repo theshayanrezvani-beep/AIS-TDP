@@ -34,7 +34,7 @@ CHANNEL_ID         = os.getenv("TELEGRAM_CHANNEL_ID", "@yourchannel").strip()
 SIGNATURE          = os.getenv("SIGNATURE", "📊 @yourchannel | کانال نرخ بازار").strip()
 
 # اگر مقادیر priceto به ریال آمد (۱۰ برابر) این را ۱۰ بگذار تا تومان شود
-IRR_DIVISOR = float(os.getenv("IRR_DIVISOR", "1"))
+IRR_DIVISOR = float(os.getenv("IRR_DIVISOR", "1") or "1")
 
 PRICETO_BASE  = "https://api.priceto.day/v1/latest/irr"
 GOLDPRICE_URL = "https://data-asg.goldprice.org/dbXRates/USD"
