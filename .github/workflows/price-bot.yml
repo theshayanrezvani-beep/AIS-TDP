@@ -1,0 +1,43 @@
+name: price-bot
+
+on:
+  # تریگر اصلی: cron-job.org این رویداد را صدا می‌زند (دقیق سرِ ساعت)
+  repository_dispatch:
+    types: [run-prices]
+  # اجرای دستی از تب Actions
+  workflow_dispatch:
+  # بک‌آپ کم‌تکرار (به وقت UTC). تهران = UTC+3:30
+  #   ۰۸:۳۰ UTC = ۱۲:۰۰ تهران  |  ۲۰:۳۰ UTC = ۰۰:۰۰ تهران
+  schedule:
+    - cron: "30 8 * * *"
+    - cron: "30 20 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: price-bot
+  cancel-in-progress: false
+
+jobs:
+  post-prices:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run price bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          BRSAPI_KEY: ${{ secrets.BRSAPI_KEY }}
+          SIGNATURE: ${{ secrets.SIGNATURE }}
+        run: python price_bot.py
