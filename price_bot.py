@@ -2,12 +2,11 @@
 """
 ربات قیمت بازار تلگرام — نرخ ارز، طلا و سکه
 دو بار در روز (۱۲ ظهر و ۱۲ شب به وقت تهران) یک پیام تمیز توی کانال می‌گذارد.
-اجرا روی GitHub Actions (رایگان، خارج از ایران، مقاوم به فیلترینگ).
+اجرا روی GitHub Actions (رایگان، خارج از ایران).
 
-نکته‌ی کلیدی: چون ربات بیرون ایران اجرا می‌شود، منبع داده هم باید بیرون ایران میزبانی
-شود وگرنه IP خارجی بلاک می‌شود. پس:
-  - قیمت‌های تومانی (ارز/سکه/طلا) از priceto.day  (میزبان: Netlify — جهانی)
-  - انس جهانی طلا از goldprice.org                 (جهانی)
+منبع داده: BrsApi.ir  (همه چیز را یکجا و به تومان می‌دهد: ارز، تتر، طلا، سکه، انس جهانی)
+نکته‌ی حیاتی: BrsApi پشتِ فایروالِ 6G است و User-Agent پیش‌فرضِ پایتون را بلاک می‌کند،
+پس حتماً با یک User-Agent شبیهِ مرورگرِ واقعی درخواست می‌دهیم.
 """
 
 import os
@@ -32,18 +31,25 @@ except Exception:  # noqa
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 CHANNEL_ID         = os.getenv("TELEGRAM_CHANNEL_ID", "@yourchannel").strip()
 SIGNATURE          = os.getenv("SIGNATURE", "📊 @yourchannel | کانال نرخ بازار").strip()
+BRSAPI_KEY         = os.getenv("BRSAPI_KEY", "").strip()
 
-# اگر مقادیر priceto به ریال آمد (۱۰ برابر) این را ۱۰ بگذار تا تومان شود
-IRR_DIVISOR = float(os.getenv("IRR_DIVISOR", "1") or "1")
-
-PRICETO_BASE  = "https://api.priceto.day/v1/latest/irr"
-GOLDPRICE_URL = "https://data-asg.goldprice.org/dbXRates/USD"
+# اندپوینتِ درست و در دسترس از خارج (نه api.brsapi.ir که فقط داخل ایران جواب می‌دهد)
+BRSAPI_URL = "https://BrsApi.ir/Api/Market/Gold_Currency.php"
 
 PERSIAN_DIGITS = os.getenv("PERSIAN_DIGITS", "1") not in ("0", "false", "False")
-HTTP_TIMEOUT   = 20
-UA = {"User-Agent": "Mozilla/5.0 (price-bot)", "Accept": "application/json"}
+HTTP_TIMEOUT   = 25
 
-# ترتیب نمایش.  هر آیتم: (کلید, برچسب فارسی, واحد)
+# User-Agent معتبرِ مرورگر — کلیدِ عبور از فایروالِ BrsApi
+BROWSER_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/124.0.0.0 Safari/537.36"),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "fa-IR,fa;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Referer": "https://brsapi.ir/",
+}
+
+# ترتیب نمایش.  (کلید, برچسب فارسی, واحد پیش‌فرض)
 CURRENCY_ITEMS = [
     ("USD",  "🇺🇸 دلار آمریکا", "تومان"),
     ("EUR",  "🇪🇺 یورو",        "تومان"),
@@ -60,24 +66,20 @@ GOLD_ITEMS = [
     ("OUNCE",      "🌍 انس جهانی طلا",       "دلار"),
 ]
 
-# نمادهای کاندید برای priceto.day (اولین نمادی که جواب دهد استفاده می‌شود)
-PRICETO_SYMBOLS = {
-    "USD":        ["usd"],
-    "EUR":        ["euro", "eur"],
-    "AED":        ["aed", "derham", "dirham"],
-    "GBP":        ["gbp", "pound"],
-    "TRY":        ["try", "lira", "turkish-lira"],
-    "CNY":        ["cny", "yuan"],
-    "USDT":       ["tether", "usdt"],
-    "GOLD18":     ["gold-18ayar", "gold-gram18", "geram18", "gold18", "18ayar"],
-    "COIN_EMAMI": ["coin-emami", "emami"],
-    "COIN_BAHAR": ["coin-baharazadi", "baharazadi"],
+# نگاشت: کلید → (نمادهای ممکن, بخشی از نام فارسی)
+BRS_MATCH = {
+    "USD":        (["USD"],                          ["دلار آمریکا", "دلار"]),
+    "EUR":        (["EUR"],                          ["یورو"]),
+    "AED":        (["AED"],                          ["درهم"]),
+    "GBP":        (["GBP"],                          ["پوند"]),
+    "TRY":        (["TRY"],                          ["لیر"]),
+    "CNY":        (["CNY"],                          ["یوان"]),
+    "USDT":       (["USDT"],                         ["تتر"]),
+    "GOLD18":     (["IR_GOLD_18K", "18K", "GOLD18"], ["18 عیار", "۱۸ عیار", "طلای 18"]),
+    "COIN_EMAMI": (["IR_COIN_EMAMI", "SEKE_EMAMI"],  ["امامی"]),
+    "COIN_BAHAR": (["IR_COIN_BAHAR", "SEKE_BAHAR"],  ["بهار آزادی", "بهار"]),
+    "OUNCE":      (["XAUUSD", "XAU", "ONS"],         ["انس طلا"]),
 }
-
-PRICE_KEYS  = ("price", "value", "rate", "p", "amount", "irr", "toman")
-CHANGE_KEYS = ("change_percent", "changepercent", "change", "dp", "percent", "pc")
-
-_raw_logged = False  # فقط یک‌بار پاسخ خام را چاپ می‌کنیم
 
 
 # ─────────────────────────── کمک‌تابع‌ها ───────────────────────────
@@ -101,66 +103,13 @@ def fmt_price(value, unit):
     return to_persian_digits(txt)
 
 
-def _to_float(v):
+def parse_change(value):
+    if value is None:
+        return None
     try:
-        return float(str(v).replace(",", "").replace("%", "").strip())
+        return float(str(value).replace("%", "").replace(",", "").strip())
     except (ValueError, TypeError):
         return None
-
-
-def _looks_like_price(n):
-    if n is None:
-        return False
-    a = abs(n)
-    if 1_000_000_000 <= a <= 2_000_000_000:   # احتمالاً timestamp
-        return False
-    if 1900 <= a <= 2100 and float(n).is_integer():  # احتمالاً سال
-        return False
-    return 0 < a < 1e12
-
-
-def extract_price(obj):
-    """قیمت را از هر شکلِ JSON پیدا می‌کند (دفاعی)."""
-    # ۱) کلید نام‌دار
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if str(k).lower() in PRICE_KEYS:
-                n = _to_float(v)
-                if _looks_like_price(n):
-                    return n
-        for v in obj.values():
-            r = extract_price(v)
-            if r is not None:
-                return r
-    elif isinstance(obj, list):
-        for v in obj:
-            r = extract_price(v)
-            if r is not None:
-                return r
-    else:
-        n = _to_float(obj)
-        if _looks_like_price(n):
-            return n
-    return None
-
-
-def extract_change(obj):
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if str(k).lower() in CHANGE_KEYS:
-                n = _to_float(v)
-                if n is not None and abs(n) < 100:
-                    return n
-        for v in obj.values():
-            r = extract_change(v)
-            if r is not None:
-                return r
-    elif isinstance(obj, list):
-        for v in obj:
-            r = extract_change(v)
-            if r is not None:
-                return r
-    return None
 
 
 def change_badge(pct):
@@ -174,59 +123,64 @@ def change_badge(pct):
 
 
 # ─────────────────────────── دریافت داده ───────────────────────────
-def fetch_priceto():
-    """قیمت‌های تومانی از priceto.day. خروجی dict ممکن است ناقص باشد."""
-    global _raw_logged
-    result = {}
-    for key, candidates in PRICETO_SYMBOLS.items():
-        for sym in candidates:
-            url = f"{PRICETO_BASE}/{sym}"
-            try:
-                r = requests.get(url, headers=UA, timeout=HTTP_TIMEOUT)
-                if r.status_code != 200:
-                    continue
-                data = r.json()
-            except Exception as e:
-                print(f"[priceto] {key}/{sym} خطا: {e}")
-                continue
-
-            if not _raw_logged:
-                print(f"[priceto] نمونه پاسخ خام برای {sym}: {str(data)[:500]}")
-                _raw_logged = True
-
-            price = extract_price(data)
-            if price is None:
-                continue
-            price = price / IRR_DIVISOR
-            result[key] = {"price": price, "pct": extract_change(data)}
-            print(f"[priceto] {key} ← {sym} = {int(price):,}")
-            break
-        else:
-            print(f"[priceto] {key} پیدا نشد (نمادها: {candidates})")
-    return result
+def _flatten(data):
+    """همه‌ی آیتم‌های دیکشنری را از لیست‌های تو‌در‌توی پاسخ جمع می‌کند."""
+    items = []
+    if isinstance(data, dict):
+        for v in data.values():
+            if isinstance(v, list):
+                items.extend([x for x in v if isinstance(x, dict)])
+            elif isinstance(v, dict):
+                items.append(v)
+    elif isinstance(data, list):
+        items = [x for x in data if isinstance(x, dict)]
+    return items
 
 
-def fetch_ounce():
-    """انس جهانی طلا به دلار از goldprice.org"""
+def fetch_brsapi():
+    if not BRSAPI_KEY:
+        print("خطا: BRSAPI_KEY تنظیم نشده. کلید رایگان را از brsapi.ir بگیر و در Secrets بگذار.")
+        return {}
     try:
-        r = requests.get(GOLDPRICE_URL, headers=UA, timeout=HTTP_TIMEOUT)
+        r = requests.get(BRSAPI_URL, params={"key": BRSAPI_KEY},
+                         headers=BROWSER_HEADERS, timeout=HTTP_TIMEOUT)
+        print(f"[BrsApi] status = {r.status_code}")
         r.raise_for_status()
         data = r.json()
-        item = data["items"][0]
-        price = item.get("xauPrice")
-        pct = item.get("pcXau")
-        if price:
-            print(f"[goldprice] انس = {price}")
-            return {"OUNCE": {"price": price, "pct": pct}}
     except Exception as e:
-        print(f"[goldprice] خطا: {e}")
-    return {}
+        print(f"[BrsApi] خطا در دریافت: {e}")
+        return {}
 
+    items = _flatten(data)
+    print(f"[BrsApi] {len(items)} آیتم در پاسخ بود.")
+    if items:
+        # نمونه‌ی چند آیتم اول برای اطمینان از ساختار
+        print(f"[BrsApi] نمونه: {str(items[:3])[:400]}")
 
-def get_prices():
-    prices = fetch_priceto()
-    prices.update(fetch_ounce())
-    return prices
+    result = {}
+    for key, (symbols, names) in BRS_MATCH.items():
+        syms = [s.upper() for s in symbols]
+        found = None
+        for it in items:                       # اول با نماد
+            if str(it.get("symbol", "")).upper() in syms:
+                found = it
+                break
+        if found is None:                       # بعد با نام
+            for it in items:
+                nm = str(it.get("name", ""))
+                if any(n in nm for n in names):
+                    found = it
+                    break
+        if found is None:
+            print(f"[BrsApi] {key} پیدا نشد.")
+            continue
+        result[key] = {
+            "price": found.get("price"),
+            "pct": parse_change(found.get("change_percent", found.get("change_percentage"))),
+            "unit": (str(found.get("unit", "")).strip() or None),
+        }
+        print(f"[BrsApi] {key} ✓ = {found.get('price')} {found.get('unit','')}")
+    return result
 
 
 # ─────────────────────────── ساخت پیام ───────────────────────────
@@ -255,10 +209,11 @@ def build_header():
 def render_section(title, items, prices):
     lines = [f"<b>{title}</b>"]
     any_row = False
-    for key, label, unit in items:
+    for key, label, default_unit in items:
         info = prices.get(key)
         if not info:
             continue
+        unit = info.get("unit") or default_unit
         price_txt = fmt_price(info.get("price"), unit)
         if price_txt is None:
             continue
@@ -303,9 +258,9 @@ def main():
         print("خطا: TELEGRAM_BOT_TOKEN تنظیم نشده.")
         sys.exit(1)
 
-    prices = get_prices()
+    prices = fetch_brsapi()
     if not prices:
-        print("هیچ داده‌ای از منابع گرفته نشد؛ برای جلوگیری از پست خالی خارج می‌شویم.")
+        print("هیچ داده‌ای گرفته نشد؛ برای جلوگیری از پست خالی خارج می‌شویم.")
         sys.exit(1)
     if not any(k in prices for k in ("USD", "USDT", "GOLD18")):
         print("داده‌ی کلیدی (دلار/تتر/طلا) موجود نیست؛ پست منتشر نمی‌شود.")
