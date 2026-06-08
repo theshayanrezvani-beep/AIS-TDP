@@ -38,6 +38,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-          BRSAPI_KEY: ${{ secrets.BRSAPI_KEY }}
           SIGNATURE: ${{ secrets.SIGNATURE }}
+          # اختیاری: اگر قیمت‌ها ۱۰ برابر (ریالی) آمد، این را روی 10 بگذار
+          IRR_DIVISOR: ${{ secrets.IRR_DIVISOR }}
         run: python price_bot.py
