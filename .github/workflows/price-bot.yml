@@ -1,16 +1,12 @@
 name: price-bot
 
 on:
-  # تریگر اصلی: cron-job.org این رویداد را صدا می‌زند (دقیق سرِ ساعت)
   repository_dispatch:
     types: [run-prices]
-  # اجرای دستی از تب Actions
   workflow_dispatch:
-  # بک‌آپ کم‌تکرار (به وقت UTC). تهران = UTC+3:30
-  #   ۰۸:۳۰ UTC = ۱۲:۰۰ تهران  |  ۲۰:۳۰ UTC = ۰۰:۰۰ تهران
   schedule:
-    - cron: "30 8 * * *"
-    - cron: "30 20 * * *"
+    - cron: "30 8 * * *"    # ۱۲:۰۰ تهران
+    - cron: "30 20 * * *"   # ۰۰:۰۰ تهران
 
 permissions:
   contents: read
@@ -38,7 +34,6 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          BRSAPI_KEY: ${{ secrets.BRSAPI_KEY }}
           SIGNATURE: ${{ secrets.SIGNATURE }}
-          # اختیاری: اگر قیمت‌ها ۱۰ برابر (ریالی) آمد، این را روی 10 بگذار
-          IRR_DIVISOR: ${{ secrets.IRR_DIVISOR }}
         run: python price_bot.py
