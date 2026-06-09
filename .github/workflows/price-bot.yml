@@ -3,10 +3,7 @@ name: price-bot
 on:
   repository_dispatch:
     types: [run-prices]
-  workflow_dispatch:
-  schedule:
-    - cron: "30 8 * * *"    # ۱۲:۰۰ تهران
-    - cron: "30 20 * * *"   # ۰۰:۰۰ تهران
+  workflow_dispatch:        # اجرای دستی از تب Actions
 
 permissions:
   contents: read
