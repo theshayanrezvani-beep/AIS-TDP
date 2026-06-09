@@ -1,14 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-ربات قیمت بازار تلگرام — نرخ ارز، طلا و سکه   (نسخه نهایی)
-دو بار در روز (۱۲ ظهر و ۱۲ شب به وقت تهران) یک پیام تمیز توی کانال می‌گذارد.
-اجرا روی GitHub Actions (رایگان، خارج از ایران).
+ربات قیمت بازار تلگرام (نسخه نهایی — Relay به priceto.day)
+دو بار در روز (۱۲ ظهر و ۱۲ شب تهران) پیام قیمت توی کانال می‌گذارد.
 
-منبع داده: فایلِ JSON ثابتِ رایگانِ BrsApi روی دامنه‌ی اصلی (brsapi.ir)
-  - بدون کلید
-  - روی دامنه‌ی اصلی که از گیت‌هاب در دسترس است (نه api.brsapi.ir که از خارج timeout می‌دهد)
-  - با User-Agent مرورگر، چون فایروالِ 6G سایت، UA پیش‌فرضِ پایتون را بلاک می‌کند
-همه چیز را یکجا و به تومان می‌دهد: ارز، تتر، طلا، سکه و انس جهانی.
+معماری: Cloudflare Worker (worker.js) قیمت‌ها را از priceto.day می‌گیرد و
+به شکلِ {items:{KEY:{symbol,data}}, missing:[...]} برمی‌گرداند.
+ربات روی گیت‌هاب فقط با Worker حرف می‌زند (RELAY_URL).
 """
 
 import os
@@ -22,39 +19,21 @@ try:
     from zoneinfo import ZoneInfo
 except Exception:  # noqa
     ZoneInfo = None
-
 try:
     import jdatetime
 except Exception:  # noqa
     jdatetime = None
 
-VERSION = "4.0 (BrsApi static-json)"
+VERSION = "7.0 (relay -> tgju)"
 
-# ─────────────────────────── تنظیمات (از env) ───────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 CHANNEL_ID         = os.getenv("TELEGRAM_CHANNEL_ID", "@yourchannel").strip()
 SIGNATURE          = os.getenv("SIGNATURE", "📊 @yourchannel | کانال نرخ بازار").strip()
-
-# فایل‌های JSON ثابتِ رایگان (به ترتیب اولویت). بدون کلید.
-DATA_URLS = [
-    "https://brsapi.ir/FreeTsetmcBourseApi/Api_Free_Gold_Currency_v2.json",
-    "https://brsapi.ir/FreeTsetmcBourseApi/Api_Free_Gold_Currency.json",
-]
+RELAY_URL          = os.getenv("RELAY_URL", "").strip()
 
 PERSIAN_DIGITS = os.getenv("PERSIAN_DIGITS", "1") not in ("0", "false", "False")
-HTTP_TIMEOUT   = 25
+HTTP_TIMEOUT   = 30
 
-# User-Agent معتبرِ مرورگر — کلیدِ عبور از فایروالِ BrsApi
-BROWSER_HEADERS = {
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                   "AppleWebKit/537.36 (KHTML, like Gecko) "
-                   "Chrome/124.0.0.0 Safari/537.36"),
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "fa-IR,fa;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Referer": "https://brsapi.ir/",
-}
-
-# ترتیب نمایش.  (کلید, برچسب فارسی, واحد پیش‌فرض)
 CURRENCY_ITEMS = [
     ("USD",  "🇺🇸 دلار آمریکا", "تومان"),
     ("EUR",  "🇪🇺 یورو",        "تومان"),
@@ -70,46 +49,83 @@ GOLD_ITEMS = [
     ("COIN_BAHAR", "🏅 سکه بهار آزادی",     "تومان"),
     ("OUNCE",      "🌍 انس جهانی طلا",       "دلار"),
 ]
+TOMAN_KEYS = {"USD", "EUR", "AED", "GBP", "TRY", "CNY", "USDT",
+              "GOLD18", "COIN_EMAMI", "COIN_BAHAR"}
 
-# نگاشت: کلید → (نمادهای ممکن, بخشی از نام فارسی) — نام، مطمئن‌ترین راهِ تطبیق است
-BRS_MATCH = {
-    "USD":        (["USD"],
-                   ["دلار آمریکا", "دلار"]),
-    "EUR":        (["EUR"],
-                   ["یورو"]),
-    "AED":        (["AED"],
-                   ["درهم امارات", "درهم"]),
-    "GBP":        (["GBP"],
-                   ["پوند انگلیس", "پوند"]),
-    "TRY":        (["TRY"],
-                   ["لیر ترکیه", "لیر"]),
-    "CNY":        (["CNY"],
-                   ["یوان چین", "یوان"]),
-    "USDT":       (["USDT"],
-                   ["تتر"]),
-    "GOLD18":     (["IR_GOLD_18K", "IR_GOLD_18", "GOLD18", "geram18", "18K"],
-                   ["طلای 18 عیار", "طلای ۱۸ عیار", "18 عیار", "۱۸ عیار"]),
-    "COIN_EMAMI": (["IR_COIN_EMAMI", "SEKE_EMAMI", "sekee_emami"],
-                   ["سکه امامی", "امامی"]),
-    "COIN_BAHAR": (["IR_COIN_BAHAR", "SEKE_BAHAR", "sekee"],
-                   ["سکه بهار آزادی", "بهار آزادی"]),
-    "OUNCE":      (["XAUUSD", "XAU", "ONS", "ons"],
-                   ["انس طلا", "اونس طلا", "انس"]),
-}
+PRICE_KEYS  = ("price", "value", "rate", "p", "amount", "irr", "close", "last")
+CHANGE_KEYS = ("change_percent", "changepercent", "change", "dp", "percent", "pc", "cp")
 
 
-# ─────────────────────────── کمک‌تابع‌ها ───────────────────────────
 def to_persian_digits(s):
     if not PERSIAN_DIGITS:
         return s
     return str(s).translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
 
 
-def fmt_price(value, unit):
+def _to_float(v):
     try:
-        num = float(str(value).replace(",", "").strip())
+        return float(str(v).replace(",", "").replace("%", "").strip())
     except (ValueError, TypeError):
         return None
+
+
+def _looks_like_price(n):
+    if n is None:
+        return False
+    a = abs(n)
+    if 1_000_000_000 <= a <= 2_000_000_000:   # timestamp
+        return False
+    if 1900 <= a <= 2100 and float(n).is_integer():  # سال
+        return False
+    return 0 < a < 1e13
+
+
+def extract_price(obj):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if str(k).lower() in PRICE_KEYS:
+                n = _to_float(v)
+                if _looks_like_price(n):
+                    return n
+        for v in obj.values():
+            r = extract_price(v)
+            if r is not None:
+                return r
+    elif isinstance(obj, list):
+        for v in obj:
+            r = extract_price(v)
+            if r is not None:
+                return r
+    else:
+        n = _to_float(obj)
+        if _looks_like_price(n):
+            return n
+    return None
+
+
+def extract_change(obj):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if str(k).lower() in CHANGE_KEYS:
+                n = _to_float(v)
+                if n is not None and abs(n) < 100:
+                    return n
+        for v in obj.values():
+            r = extract_change(v)
+            if r is not None:
+                return r
+    elif isinstance(obj, list):
+        for v in obj:
+            r = extract_change(v)
+            if r is not None:
+                return r
+    return None
+
+
+def fmt_price(value, unit):
+    if value is None:
+        return None
+    num = float(value)
     if num == 0:
         return None
     if unit == "دلار" and num != int(num):
@@ -117,15 +133,6 @@ def fmt_price(value, unit):
     else:
         txt = "{:,}".format(int(round(num)))
     return to_persian_digits(txt)
-
-
-def parse_change(value):
-    if value is None:
-        return None
-    try:
-        return float(str(value).replace("%", "").replace(",", "").strip())
-    except (ValueError, TypeError):
-        return None
 
 
 def change_badge(pct):
@@ -138,80 +145,61 @@ def change_badge(pct):
     return "  ➖"
 
 
-def get_field(item, *names):
-    """اولین فیلدِ موجود از میانِ چند نامِ ممکن."""
-    for n in names:
-        if n in item and item[n] not in (None, ""):
-            return item[n]
-    return None
-
-
-# ─────────────────────────── دریافت داده ───────────────────────────
-def _flatten(data):
-    items = []
-    if isinstance(data, dict):
-        for v in data.values():
-            if isinstance(v, list):
-                items.extend([x for x in v if isinstance(x, dict)])
-            elif isinstance(v, dict):
-                items.append(v)
-    elif isinstance(data, list):
-        items = [x for x in data if isinstance(x, dict)]
-    return items
+def _num(v):
+    try:
+        return float(str(v).replace(",", "").replace("%", "").strip())
+    except (ValueError, TypeError):
+        return None
 
 
 def fetch_data():
-    data = None
-    for url in DATA_URLS:
-        try:
-            r = requests.get(url, headers=BROWSER_HEADERS, timeout=HTTP_TIMEOUT)
-            print(f"[BrsApi] GET {url} → status {r.status_code}")
-            if r.status_code != 200:
-                continue
-            data = r.json()
-            break
-        except Exception as e:
-            print(f"[BrsApi] خطا روی {url}: {e}")
-            continue
-
-    if data is None:
-        print("[BrsApi] هیچ‌کدام از آدرس‌ها جواب ۲۰۰ ندادند.")
+    if not RELAY_URL:
+        print("خطا: RELAY_URL تنظیم نشده.")
+        return {}
+    try:
+        r = requests.get(RELAY_URL, timeout=HTTP_TIMEOUT)
+        print(f"[Relay] status {r.status_code}")
+        payload = r.json()
+    except Exception as e:
+        print(f"[Relay] خطا: {e}")
         return {}
 
-    items = _flatten(data)
-    print(f"[BrsApi] {len(items)} آیتم در پاسخ بود.")
-    if items:
-        print(f"[BrsApi] نمونه آیتم: {str(items[0])[:300]}")
+    if not isinstance(payload, dict):
+        print(f"[Relay] پاسخ نامعتبر: {str(payload)[:200]}")
+        return {}
+
+    print(f"[Relay] منبع: {payload.get('usedSource')}")
+    items = payload.get("items", {})
+    missing = payload.get("missing", [])
+    if missing:
+        print(f"[Relay] اقلامِ پیدانشده: {missing}")
+    if payload.get("debugKeys"):
+        print(f"[Relay] کلیدهای محتمل برای اشکال‌زدایی: {payload['debugKeys']}")
+    if not items:
+        print(f"[Relay] هیچ قلمی نیامد. پاسخ: {str(payload)[:300]}")
+        return {}
 
     result = {}
-    for key, (symbols, names) in BRS_MATCH.items():
-        syms = [s.upper() for s in symbols]
-        found = None
-        for it in items:                       # اول با نماد
-            sym = str(get_field(it, "symbol", "Symbol", "code") or "").upper()
-            if sym and sym in syms:
-                found = it
-                break
-        if found is None:                       # بعد با نام
-            for it in items:
-                nm = str(get_field(it, "name", "Name", "name_fa", "title") or "")
-                if any(n in nm for n in names):
-                    found = it
-                    break
-        if found is None:
-            print(f"[BrsApi] {key} پیدا نشد.")
+    for key, node in items.items():
+        price = _num(node.get("p") if isinstance(node, dict) else node)
+        if price is None or price == 0:
             continue
-        result[key] = {
-            "price": get_field(found, "price", "Price", "value", "p"),
-            "pct": parse_change(get_field(found, "change_percent", "change_percentage",
-                                          "dp", "percent")),
-            "unit": (str(get_field(found, "unit", "Unit") or "").strip() or None),
-        }
-        print(f"[BrsApi] {key} ✓ = {result[key]['price']} {result[key]['unit'] or ''}")
+        pct = _num(node.get("dp")) if isinstance(node, dict) else None
+        if pct is not None and str(node.get("dt", "")).lower() in ("low", "down"):
+            pct = -abs(pct)
+        result[key] = {"price": price, "pct": pct}
+        print(f"[Relay] {key} ✓ = {price}")
+
+    # tgju مقادیر داخلی را به ریال می‌دهد؛ به تومان تبدیل کن (انس جهانی دلار است و دست‌نخورده)
+    usd = result.get("USD", {}).get("price")
+    if usd and usd > 300000:
+        print("[Relay] مقادیر ریالی تشخیص داده شد؛ تومانی‌ها ÷۱۰ می‌شوند.")
+        for k in TOMAN_KEYS:
+            if k in result and result[k]["price"]:
+                result[k]["price"] = result[k]["price"] / 10
     return result
 
 
-# ─────────────────────────── ساخت پیام ───────────────────────────
 def build_header():
     now = datetime.utcnow()
     if ZoneInfo:
@@ -227,26 +215,22 @@ def build_header():
     hour = now.hour
     time_str = to_persian_digits(now.strftime("%H:%M"))
     period = "🌞 گزارش ظهر" if 6 <= hour < 18 else "🌙 گزارش شب"
-    return (
-        "💰 <b>نرخ لحظه‌ای بازار ایران</b>\n"
-        f"🗓 {date_line}\n"
-        f"🕛 ساعت {time_str} به وقت تهران — {period}"
-    )
+    return ("💰 <b>نرخ لحظه‌ای بازار ایران</b>\n"
+            f"🗓 {date_line}\n"
+            f"🕛 ساعت {time_str} به وقت تهران — {period}")
 
 
 def render_section(title, items, prices):
     lines = [f"<b>{title}</b>"]
     any_row = False
-    for key, label, default_unit in items:
+    for key, label, unit in items:
         info = prices.get(key)
         if not info:
             continue
-        unit = info.get("unit") or default_unit
         price_txt = fmt_price(info.get("price"), unit)
         if price_txt is None:
             continue
-        badge = change_badge(info.get("pct"))
-        lines.append(f"{label}: <b>{price_txt}</b> {unit}{badge}")
+        lines.append(f"{label}: <b>{price_txt}</b> {unit}{change_badge(info.get('pct'))}")
         any_row = True
     return "\n".join(lines) if any_row else None
 
@@ -264,15 +248,10 @@ def build_message(prices):
     return "\n".join(parts)
 
 
-# ─────────────────────────── ارسال به تلگرام ───────────────────────────
 def send_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHANNEL_ID,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }
+    payload = {"chat_id": CHANNEL_ID, "text": text,
+               "parse_mode": "HTML", "disable_web_page_preview": True}
     r = requests.post(url, json=payload, timeout=HTTP_TIMEOUT)
     if r.status_code != 200:
         print(f"[تلگرام] خطا {r.status_code}: {r.text}")
@@ -280,25 +259,22 @@ def send_message(text):
     print("[تلگرام] پیام با موفقیت ارسال شد ✅")
 
 
-# ─────────────────────────── main ───────────────────────────
 def main():
-    print(f"=== price_bot نسخه {VERSION} ===")  # نشانگرِ نسخه — برای اطمینان از اجرای کدِ جدید
+    print(f"=== price_bot نسخه {VERSION} ===")
     if not TELEGRAM_BOT_TOKEN:
         print("خطا: TELEGRAM_BOT_TOKEN تنظیم نشده.")
         sys.exit(1)
-
     prices = fetch_data()
     if not prices:
-        print("هیچ داده‌ای گرفته نشد؛ برای جلوگیری از پست خالی خارج می‌شویم.")
+        print("داده‌ای نیامد؛ پست منتشر نمی‌شود.")
         sys.exit(1)
-    if not any(k in prices for k in ("USD", "USDT", "GOLD18")):
-        print("داده‌ی کلیدی (دلار/تتر/طلا) موجود نیست؛ پست منتشر نمی‌شود.")
+    if not any(k in prices for k in ("USD", "USDT")):
+        print("داده‌ی کلیدی (دلار/تتر) نیست؛ پست منتشر نمی‌شود.")
         sys.exit(1)
-
     message = build_message(prices)
-    print("─── پیش‌نمایش پیام ───")
+    print("─── پیش‌نمایش ───")
     print(message)
-    print("──────────────────────")
+    print("────────────────")
     send_message(message)
 
 
