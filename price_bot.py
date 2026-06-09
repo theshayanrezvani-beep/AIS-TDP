@@ -26,6 +26,10 @@ except Exception:  # noqa
 
 VERSION = "7.0 (relay -> tgju)"
 
+PERSIAN_WEEKDAYS = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
+PERSIAN_MONTHS = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+                  "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"]
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 CHANNEL_ID         = os.getenv("TELEGRAM_CHANNEL_ID", "@yourchannel").strip()
 SIGNATURE          = os.getenv("SIGNATURE", "📊 @yourchannel | کانال نرخ بازار").strip()
@@ -209,15 +213,13 @@ def build_header():
             pass
     if jdatetime:
         j = jdatetime.datetime.fromgregorian(datetime=now.replace(tzinfo=None))
-        date_line = to_persian_digits(j.strftime("%A %d %B %Y"))
+        wd = PERSIAN_WEEKDAYS[j.weekday()]
+        date_line = f"{wd} {to_persian_digits(j.day)} {PERSIAN_MONTHS[j.month - 1]} {to_persian_digits(j.year)}"
     else:
         date_line = to_persian_digits(now.strftime("%Y/%m/%d"))
-    hour = now.hour
     time_str = to_persian_digits(now.strftime("%H:%M"))
-    period = "🌞 گزارش ظهر" if 6 <= hour < 18 else "🌙 گزارش شب"
-    return ("💰 <b>نرخ لحظه‌ای بازار ایران</b>\n"
-            f"🗓 {date_line}\n"
-            f"🕛 ساعت {time_str} به وقت تهران — {period}")
+    return ("<b>نرخ طلا و ارز در بازار ایران</b>\n"
+            f"🗓 {date_line} - ساعت {time_str}")
 
 
 def render_section(title, items, prices):
@@ -230,7 +232,7 @@ def render_section(title, items, prices):
         price_txt = fmt_price(info.get("price"), unit)
         if price_txt is None:
             continue
-        lines.append(f"{label}: <b>{price_txt}</b> {unit}{change_badge(info.get('pct'))}")
+        lines.append(f"{label}: <b>{price_txt}</b> {unit}")
         any_row = True
     return "\n".join(lines) if any_row else None
 
@@ -244,7 +246,7 @@ def build_message(prices):
         parts.append(cur)
     if gold:
         parts += [sep, gold]
-    parts += [sep, html.escape(SIGNATURE)]
+    parts += ["", html.escape(SIGNATURE)]
     return "\n".join(parts)
 
 
