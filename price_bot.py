@@ -28,7 +28,7 @@ CHANNEL_ID         = os.getenv("TELEGRAM_CHANNEL_ID", "@yourchannel").strip()
 SIGNATURE          = os.getenv("SIGNATURE", "📊 @yourchannel | کانال نرخ بازار").strip()
 RELAY_URL          = os.getenv("RELAY_URL", "").strip()
 
-PERSIAN_DIGITS = os.getenv("PERSIAN_DIGITS", "1") not in ("0", "false", "False")
+PERSIAN_DIGITS = os.getenv("PERSIAN_DIGITS", "0") not in ("0", "false", "False")
 HTTP_TIMEOUT   = 35
 
 PERSIAN_WEEKDAYS = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
