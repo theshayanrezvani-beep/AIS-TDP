@@ -37,12 +37,9 @@ PERSIAN_MONTHS = ["فروردین", "اردیبهشت", "خرداد", "تیر", 
 
 # (کلید, ایموجی, نام, واحد, تومانی؟)  — ترتیب نمایش
 ITEMS = [
-    ("USD",        "💵", "دلار",       "تومان", True),
-    ("EUR",        "💶", "یورو",       "تومان", True),
-    ("GOLD18",     "🟡", "گرم طلا",    "تومان", True),
-    ("COIN_EMAMI", "🪙", "سکه امامی",  "تومان", True),
-    ("BTC",        "₿",  "بیت‌کوین",   "دلار",  False),
-    ("USDT",       "₮",  "تتر",        "تومان", True),
+    ("USD",    "💵", "دلار",     "تومان", True),
+    ("GOLD18", "🟡", "گرم طلا",  "تومان", True),
+    ("BTC",    "₿",  "بیت‌کوین", "دلار",  False),
 ]
 
 
@@ -128,11 +125,15 @@ def build_header():
             f"🗓 {date_line} - ساعت {time_str}")
 
 
-def pct_text(pct):
+def change_sentence(pct):
     if pct is None:
-        return "نامشخص"
-    arrow = "🔺" if pct > 0 else ("🔻" if pct < 0 else "➖")
-    return f"{arrow} {to_persian_digits('{:.1f}'.format(abs(pct)))}٪"
+        return "تغییرِ یک‌ساله نامشخص است"
+    p = to_persian_digits("{:.1f}".format(abs(pct)))
+    if pct > 0:
+        return f"یعنی از پارسال تا الان {p}٪ افزایش داشته"
+    if pct < 0:
+        return f"یعنی از پارسال تا الان {p}٪ کاهش داشته"
+    return "یعنی از پارسال تا الان تغییری نداشته"
 
 
 def render_item(key, emoji, name, unit):
@@ -153,8 +154,8 @@ def build_message(prices):
         ya_txt = ya if ya else "نامشخص"
         lines = [
             f"{emoji} <b>قیمت {name}: {cur}</b>",
-            f"🔙 قیمت {name} در پارسال همین لحظه: {ya_txt}",
-            f"📊 میزان تغییرات یک‌ساله: {pct_text(info.get('pct'))}",
+            f"قیمت {name} در پارسال همین لحظه: {ya_txt}",
+            f"<blockquote>{change_sentence(info.get('pct'))}</blockquote>",
         ]
         blocks.append("\n".join(lines))
 
